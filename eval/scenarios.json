@@ -1,0 +1,130 @@
+[
+  {
+    "id": "book_happy_path",
+    "description": "Patient books a cardiology appointment successfully",
+    "intent": "book",
+    "conversation": [
+      {"role": "user", "content": "Hi, I'd like to book an appointment with a cardiologist"},
+      {"role": "user", "content": "My name is Rahul Sharma"},
+      {"role": "user", "content": "My number is 9876543210"},
+      {"role": "user", "content": "Dr. Hariprasad please"},
+      {"role": "user", "content": "Tomorrow"},
+      {"role": "user", "content": "Nine AM"}
+    ],
+    "expected_outcome": {
+      "action": "book_appointment",
+      "tool_called": "book_appointment",
+      "confirmation_code_issued": true
+    }
+  },
+  {
+    "id": "slot_conflict_resolution",
+    "description": "Patient requests a taken slot — agent offers alternatives",
+    "intent": "book",
+    "pre_seed": {
+      "doctor": "Dr. K. Hariprasad",
+      "date_offset_days": 1,
+      "time": "09:00",
+      "patient_name": "Existing Patient",
+      "patient_phone": "1111111111"
+    },
+    "conversation": [
+      {"role": "user", "content": "Book me with Dr. Hariprasad tomorrow at 9"},
+      {"role": "user", "content": "Ravi Kumar, 9000000001"}
+    ],
+    "expected_outcome": {
+      "action": "offer_alternative",
+      "tool_called": "book_appointment",
+      "alternatives_offered": true
+    }
+  },
+  {
+    "id": "reschedule_flow",
+    "description": "Patient reschedules using confirmation code",
+    "intent": "reschedule",
+    "conversation": [
+      {"role": "user", "content": "I need to reschedule my appointment"},
+      {"role": "user", "content": "My confirmation code is {{confirmation_code}}"},
+      {"role": "user", "content": "Move it to next Monday at 10 AM"}
+    ],
+    "expected_outcome": {
+      "action": "reschedule_appointment",
+      "tool_called": "reschedule_appointment",
+      "success": true
+    }
+  },
+  {
+    "id": "cancel_flow",
+    "description": "Patient cancels an appointment",
+    "intent": "cancel",
+    "conversation": [
+      {"role": "user", "content": "I want to cancel my appointment"},
+      {"role": "user", "content": "Code is {{confirmation_code}}"}
+    ],
+    "expected_outcome": {
+      "action": "cancel_appointment",
+      "tool_called": "cancel_appointment",
+      "success": true
+    }
+  },
+  {
+    "id": "mid_conversation_change",
+    "description": "Patient changes doctor mid-booking flow",
+    "intent": "book",
+    "conversation": [
+      {"role": "user", "content": "Book me with Dr. Anita Reddy"},
+      {"role": "user", "content": "Actually wait, can I see a neurologist instead?"},
+      {"role": "user", "content": "Yes Dr. Anita is fine, Thursday at 9"},
+      {"role": "user", "content": "Sneha Patel, 9123456789"}
+    ],
+    "expected_outcome": {
+      "action": "book_appointment",
+      "tool_called": "book_appointment",
+      "doctor_name_contains": "Anita"
+    }
+  },
+  {
+    "id": "vague_symptom_request",
+    "description": "Patient describes symptom, not doctor — agent resolves department",
+    "intent": "book",
+    "conversation": [
+      {"role": "user", "content": "I've been having chest pain and breathlessness"},
+      {"role": "user", "content": "Yes a cardiologist is fine"},
+      {"role": "user", "content": "Dr. Hariprasad, this Friday at 11"},
+      {"role": "user", "content": "Arun Mehta, 9988776655"}
+    ],
+    "expected_outcome": {
+      "action": "book_appointment",
+      "tool_called": "list_doctors",
+      "department_inferred": "Cardiology"
+    }
+  },
+  {
+    "id": "no_confirmation_code_lookup",
+    "description": "Patient wants to cancel but forgot confirmation code",
+    "intent": "cancel",
+    "conversation": [
+      {"role": "user", "content": "I want to cancel but I don't have my confirmation code"},
+      {"role": "user", "content": "My phone number is 9876543210"}
+    ],
+    "expected_outcome": {
+      "action": "cancel_appointment",
+      "tool_called": "lookup_appointments",
+      "success": true
+    }
+  },
+  {
+    "id": "out_of_hours_request",
+    "description": "Patient requests a time when doctor is unavailable",
+    "intent": "book",
+    "conversation": [
+      {"role": "user", "content": "Book Dr. Suresh Rao on Tuesday at 10 AM"},
+      {"role": "user", "content": "Kiran Das, 9000111222"}
+    ],
+    "expected_outcome": {
+      "action": "handle_unavailability",
+      "tool_called": "check_slots",
+      "graceful_decline": true
+    }
+  }
+]

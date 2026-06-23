@@ -1,0 +1,151 @@
+{
+  "name": "Apollo Receptionist",
+  "model": {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "temperature": 0.3,
+    "systemPrompt": "You are Priya, a friendly voice receptionist at Apollo Hospitals, Chennai. You help patients book, reschedule, or cancel appointments.\n\nRules:\n- Keep responses short (1-2 sentences). You are speaking aloud — no bullet points, no markdown.\n- Always confirm the patient's name and phone number before booking.\n- When a slot is unavailable, immediately offer the alternatives returned by the tool.\n- If the patient changes their mind mid-conversation, gracefully restart that part of the flow.\n- Today's date is injected at call start via the `current_date` variable.\n- Never make up doctor names or slot times — always call a tool first.\n- If you don't understand something, ask once to clarify. If still unclear, offer to transfer to a human.\n- End every successful booking by reading the confirmation code slowly.\n\nFlow:\n1. Greet: \"Thank you for calling Apollo Hospitals. This is Priya. How can I help you today?\"\n2. Understand intent (book / reschedule / cancel / inquire).\n3. Collect needed info via conversation (don't ask for everything at once).\n4. Call the appropriate tool.\n5. Confirm result to patient and say goodbye.",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "list_doctors",
+          "description": "List available doctors filtered by department or specialization. Call this when the patient asks about available doctors or mentions a symptom/condition.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "department": {
+                "type": "string",
+                "description": "Department name e.g. Cardiology, Neurology, Orthopaedics"
+              },
+              "specialization": {
+                "type": "string",
+                "description": "Specific condition or specialization keyword"
+              }
+            }
+          }
+        },
+        "server": {
+          "url": "{{BACKEND_URL}}/list_doctors"
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "check_slots",
+          "description": "Check available appointment slots for a specific doctor on a given date.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "doctor_name": {
+                "type": "string",
+                "description": "Full or partial name of the doctor"
+              },
+              "date": {
+                "type": "string",
+                "description": "Date in YYYY-MM-DD format"
+              }
+            },
+            "required": ["doctor_name", "date"]
+          }
+        },
+        "server": {
+          "url": "{{BACKEND_URL}}/check_slots"
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "book_appointment",
+          "description": "Book an appointment. Call this only after confirming patient name, phone, doctor, date, and time.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "patient_name": { "type": "string" },
+              "patient_phone": { "type": "string", "description": "10-digit mobile number" },
+              "doctor_name": { "type": "string" },
+              "date": { "type": "string", "description": "YYYY-MM-DD" },
+              "time": { "type": "string", "description": "HH:MM in 24-hour format" },
+              "reason": { "type": "string", "description": "Brief reason for visit" }
+            },
+            "required": ["patient_name", "patient_phone", "doctor_name", "date", "time"]
+          }
+        },
+        "server": {
+          "url": "{{BACKEND_URL}}/book_appointment"
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "reschedule_appointment",
+          "description": "Reschedule an existing appointment using the confirmation code.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "confirmation_code": { "type": "string" },
+              "new_date": { "type": "string", "description": "YYYY-MM-DD" },
+              "new_time": { "type": "string", "description": "HH:MM" }
+            },
+            "required": ["confirmation_code", "new_date", "new_time"]
+          }
+        },
+        "server": {
+          "url": "{{BACKEND_URL}}/reschedule_appointment"
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "cancel_appointment",
+          "description": "Cancel an existing appointment using the confirmation code.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "confirmation_code": { "type": "string" }
+            },
+            "required": ["confirmation_code"]
+          }
+        },
+        "server": {
+          "url": "{{BACKEND_URL}}/cancel_appointment"
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "lookup_appointments",
+          "description": "Look up all scheduled appointments for a patient by their phone number. Use this when patient wants to reschedule or cancel but doesn't have their confirmation code.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "patient_phone": { "type": "string" }
+            },
+            "required": ["patient_phone"]
+          }
+        },
+        "server": {
+          "url": "{{BACKEND_URL}}/lookup_appointments"
+        }
+      }
+    ]
+  },
+  "voice": {
+    "provider": "11labs",
+    "voiceId": "rachel",
+    "stability": 0.5,
+    "similarityBoost": 0.75
+  },
+  "transcriber": {
+    "provider": "deepgram",
+    "model": "nova-2",
+    "language": "en-IN"
+  },
+  "firstMessage": "Thank you for calling Apollo Hospitals. This is Priya. How can I help you today?",
+  "endCallMessage": "Thank you for calling Apollo Hospitals. Have a healthy day!",
+  "endCallPhrases": ["bye", "goodbye", "that's all", "thank you bye"],
+  "maxDurationSeconds": 600,
+  "backgroundSound": "off",
+  "backchannelingEnabled": true,
+  "backgroundDenoisingEnabled": true
+}
