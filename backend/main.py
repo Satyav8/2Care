@@ -91,6 +91,18 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/seed")
+def run_seed(db: Session = Depends(get_db)):
+    count = db.query(Doctor).count()
+    if count > 0:
+        return {"status": "already seeded", "doctors": count}
+    from seed import DOCTORS
+    for d in DOCTORS:
+        db.add(Doctor(**d))
+    db.commit()
+    return {"status": "seeded", "doctors": len(DOCTORS)}
+
+
 @app.post("/list_doctors")
 def list_doctors(req: ListDoctorsReq, db: Session = Depends(get_db)):
     q = db.query(Doctor)
