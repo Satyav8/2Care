@@ -26,6 +26,21 @@ def _confirmation_code():
     return "APL" + "".join(random.choices(string.digits, k=6))
 
 
+def _find_doctor(name: str, db: Session) -> Doctor | None:
+    """Multi-strategy fuzzy match: substring → any word match → first name only."""
+    # Strategy 1: direct substring
+    doc = db.query(Doctor).filter(Doctor.name.ilike(f"%{name}%")).first()
+    if doc:
+        return doc
+    # Strategy 2: match any word in the query against any word in the name
+    words = [w for w in name.lower().split() if len(w) > 2]
+    for word in words:
+        doc = db.query(Doctor).filter(Doctor.name.ilike(f"%{word}%")).first()
+        if doc:
+            return doc
+    return None
+
+
 def _slots_for_doctor(doctor: Doctor, on_date: date) -> list[str]:
     """Return list of HH:MM slot strings for a doctor on a given date."""
     day_abbr = on_date.strftime("%a")  # Mon, Tue …
@@ -126,7 +141,7 @@ def list_doctors(req: ListDoctorsReq, db: Session = Depends(get_db)):
 
 @app.post("/check_slots")
 def check_slots(req: CheckSlotsReq, db: Session = Depends(get_db)):
-    doctor = db.query(Doctor).filter(Doctor.name.ilike(f"%{req.doctor_name}%")).first()
+    doctor = _find_doctor(req.doctor_name, db)
     if not doctor:
         raise HTTPException(404, "Doctor not found")
     try:
@@ -148,7 +163,7 @@ def check_slots(req: CheckSlotsReq, db: Session = Depends(get_db)):
 
 @app.post("/book_appointment")
 def book_appointment(req: BookReq, db: Session = Depends(get_db)):
-    doctor = db.query(Doctor).filter(Doctor.name.ilike(f"%{req.doctor_name}%")).first()
+    doctor = _find_doctor(req.doctor_name, db)
     if not doctor:
         raise HTTPException(404, "Doctor not found")
     try:
