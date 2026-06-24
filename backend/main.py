@@ -21,8 +21,15 @@ app = FastAPI(title="Apollo Voice Receptionist API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+import re as _re
 DAY_MAP = {"Monday": "Mon", "Tuesday": "Tue", "Wednesday": "Wed",
            "Thursday": "Thu", "Friday": "Fri", "Saturday": "Sat", "Sunday": "Sun"}
+
+
+def _clean_code(code: str) -> str:
+    """Strip dashes, spaces, 'minus', 'dash' spoken by patient phonetically."""
+    code = code.upper().replace("MINUS", "").replace("DASH", "").replace(" ", "").replace("-", "")
+    return _re.sub(r"[^A-Z0-9]", "", code)
 
 
 def _confirmation_code():
@@ -111,6 +118,21 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+@app.get("/doctors/all")
+def all_doctors(db: Session = Depends(get_db)):
+    docs = db.query(Doctor).all()
+    return {"doctors": [
+        {
+            "name": d.name, "department": d.department,
+            "specialization": d.specialization,
+            "available_days": d.available_days,
+            "slot_duration_mins": d.slot_duration_mins,
+            "start_time": d.start_time,
+            "end_time": d.end_time,
+        } for d in docs
+    ]}
+
 
 @app.get("/appointments/all")
 def all_appointments(db: Session = Depends(get_db)):
@@ -267,7 +289,7 @@ def book_appointment(req: BookReq, db: Session = Depends(get_db)):
 @app.post("/reschedule_appointment")
 def reschedule_appointment(req: RescheduleReq, db: Session = Depends(get_db)):
     appt = db.query(Appointment).filter(
-        Appointment.confirmation_code == req.confirmation_code,
+        Appointment.confirmation_code == _clean_code(req.confirmation_code),
         Appointment.status == AppointmentStatus.scheduled,
     ).first()
     if not appt:
@@ -302,7 +324,7 @@ def reschedule_appointment(req: RescheduleReq, db: Session = Depends(get_db)):
 @app.post("/cancel_appointment")
 def cancel_appointment(req: CancelReq, db: Session = Depends(get_db)):
     appt = db.query(Appointment).filter(
-        Appointment.confirmation_code == req.confirmation_code,
+        Appointment.confirmation_code == _clean_code(req.confirmation_code),
         Appointment.status == AppointmentStatus.scheduled,
     ).first()
     if not appt:
@@ -365,13 +387,6 @@ async def vapi_tool_handler(payload: dict, db: Session = Depends(get_db)):
         results.append({"toolCallId": call_id, "result": _json.dumps(result)})
 
     return {"results": results}
-
-
-def _clean_code(code: str) -> str:
-    """Strip dashes, spaces, 'minus', 'dash' — patient repeats code phonetically."""
-    import re
-    code = code.upper().replace("MINUS", "").replace("DASH", "").replace(" ", "").replace("-", "")
-    return re.sub(r"[^A-Z0-9]", "", code)
 
 
 def _dispatch_tool(name: str, args: dict, db: Session):

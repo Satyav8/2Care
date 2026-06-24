@@ -279,7 +279,7 @@ let bookedMap = {};  // doctor_id -> date -> [times]
 
 async function initCal() {
   if (doctors.length) { renderCal(); return; }
-  const r = await fetch(API+'/list_doctors',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const r = await fetch(API+'/doctors/all');
   const d = await r.json();
   doctors = d.doctors || [];
   const sel = document.getElementById('cal-doc');
