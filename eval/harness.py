@@ -51,6 +51,22 @@ def call(path, payload=None, method="POST"):
     return r.json(), ms, r.status_code
 
 
+# ── Cleanup eval slots so harness is re-runnable ─────────────────────────
+def cleanup():
+    r = client.delete(f"{BACKEND}/eval/cleanup")
+    n = r.json().get("cancelled", 0)
+    if n: print(f"  Cleaned up {n} eval appointment(s)\n")
+
+
+def free_slot(doctor_name, date_str, pick="last"):
+    """Return first or last available slot for a doctor on a date."""
+    data, _, _ = call("/check_slots", {"doctor_name": doctor_name, "date": date_str})
+    slots = data.get("available_slots", [])
+    if not slots:
+        return None
+    return slots[-1] if pick == "last" else slots[0]
+
+
 # ── Seed a real appointment for reschedule/cancel tests ───────────────────
 def seed_appt(doctor, day, time_slot, phone="9999999999", name="Eval Patient"):
     data, _, _ = call("/book_appointment", {
@@ -132,7 +148,9 @@ SCENARIOS = [
         "desc": "Successful booking returns confirmation code",
         "fn": lambda: call("/book_appointment", {
             "patient_name": "Eval User", "patient_phone": "8888888888",
-            "doctor_name": "Dr. K. Hariprasad", "date": EVAL_MON, "time": "09:00", "reason": "eval"
+            "doctor_name": "Dr. K. Hariprasad", "date": EVAL_MON,
+            "time": free_slot("Dr. K. Hariprasad", EVAL_MON, "first") or "09:00",
+            "reason": "eval"
         }),
         "check": lambda d, ms, sc: d.get("success") is True and d.get("confirmation_code", "").startswith("APL"),
         "metric": "booking",
@@ -140,10 +158,7 @@ SCENARIOS = [
     {
         "id": "book_conflict",
         "desc": "Double-booking same slot returns alternatives",
-        "fn": lambda: call("/book_appointment", {
-            "patient_name": "Eval User 2", "patient_phone": "7777777777",
-            "doctor_name": "Dr. K. Hariprasad", "date": EVAL_MON, "time": "09:00", "reason": "eval"
-        }),
+        "fn": lambda: _conflict_test(),
         "check": lambda d, ms, sc: d.get("success") is False and len(d.get("alternatives", [])) > 0,
         "metric": "conflict_handling",
     },
@@ -195,6 +210,19 @@ SCENARIOS = [
 ]
 
 
+def _conflict_test():
+    # Book the first free slot, then try to book it again — should fail with alternatives
+    slot = free_slot("Dr. K. Hariprasad", EVAL_MON, "first")
+    if not slot:
+        return {"success": True, "alternatives": []}, 0, 200  # no slots = not a conflict scenario
+    # Book it once (may already be booked from happy_path test above)
+    call("/book_appointment", {"patient_name": "Eval Conflict", "patient_phone": "7777777777",
+                               "doctor_name": "Dr. K. Hariprasad", "date": EVAL_MON, "time": slot})
+    # Try again — should conflict
+    return call("/book_appointment", {"patient_name": "Eval Conflict 2", "patient_phone": "6666666666",
+                                      "doctor_name": "Dr. K. Hariprasad", "date": EVAL_MON, "time": slot})
+
+
 def _cancel_phonetic_test():
     code = None
     for slot in ["09:00", "09:30", "10:00", "10:30", "11:00", "11:30"]:
@@ -209,16 +237,15 @@ def _cancel_phonetic_test():
 
 
 def _reschedule_test():
-    code = None
-    for slot in ["10:00", "10:20", "10:40", "11:00", "11:20", "11:40"]:
-        code = seed_appt("Dr. Lakshmi Nair", EVAL_THU, slot, phone="5555555552", name=f"Eval Reschedule {slot}")
-        if code:
-            break
+    src = free_slot("Dr. Lakshmi Nair", EVAL_THU, "first")
+    dst = free_slot("Dr. Lakshmi Nair", EVAL_THU, "last")
+    if not src or not dst or src == dst:
+        return {"success": False}, 0, 400
+    code = seed_appt("Dr. Lakshmi Nair", EVAL_THU, src, phone="5555555552", name="Eval Reschedule")
     if not code:
         return {"success": False}, 0, 400
-    new_time = "10:20"
     return call("/reschedule_appointment", {
-        "confirmation_code": code, "new_date": NEXT_MON, "new_time": new_time
+        "confirmation_code": code, "new_date": EVAL_THU, "new_time": dst
     })
 
 
@@ -254,6 +281,7 @@ def main():
         if not scenarios:
             print(f"Scenario '{args.id}' not found"); sys.exit(1)
 
+    cleanup()
     print(f"\nApollo Receptionist Eval -- {TODAY}")
     print(f"  Backend: {BACKEND}")
     print(f"  Running {len(scenarios)} scenarios\n")

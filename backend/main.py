@@ -115,6 +115,19 @@ class LookupReq(BaseModel):
 def root():
     return FileResponse("static/index.html")
 
+@app.delete("/eval/cleanup")
+def eval_cleanup(db: Session = Depends(get_db)):
+    """Cancel all eval-seeded appointments so the harness is re-runnable."""
+    cancelled = db.query(Appointment).filter(
+        Appointment.patient_name.ilike("Eval%"),
+        Appointment.status == AppointmentStatus.scheduled,
+    ).all()
+    for a in cancelled:
+        a.status = AppointmentStatus.cancelled
+    db.commit()
+    return {"cancelled": len(cancelled)}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
