@@ -5,6 +5,8 @@ from datetime import datetime, date, timedelta
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -17,6 +19,7 @@ seed()
 
 app = FastAPI(title="Apollo Voice Receptionist API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 DAY_MAP = {"Monday": "Mon", "Tuesday": "Tue", "Wednesday": "Wed",
            "Thursday": "Thu", "Friday": "Fri", "Saturday": "Sat", "Sunday": "Sun"}
@@ -101,9 +104,65 @@ class LookupReq(BaseModel):
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
 
+@app.get("/")
+def root():
+    return FileResponse("static/index.html")
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+@app.get("/appointments/all")
+def all_appointments(db: Session = Depends(get_db)):
+    appts = db.query(Appointment).order_by(Appointment.appointment_datetime.desc()).all()
+    return {
+        "appointments": [
+            {
+                "confirmation_code": a.confirmation_code,
+                "patient_name": a.patient_name,
+                "patient_phone": a.patient_phone,
+                "doctor": a.doctor.name,
+                "department": a.doctor.department,
+                "datetime": a.appointment_datetime.strftime("%Y-%m-%d %H:%M"),
+                "reason": a.reason,
+                "status": a.status.value,
+            }
+            for a in appts
+        ]
+    }
+
+@app.get("/call_logs")
+def call_logs():
+    """Fetch recent calls from Vapi."""
+    vapi_key = os.getenv("VAPI_API_KEY", "")
+    assistant_id = os.getenv("VAPI_ASSISTANT_ID", "")
+    if not vapi_key:
+        return {"calls": []}
+    import httpx as _httpx
+    try:
+        r = _httpx.get(
+            "https://api.vapi.ai/call",
+            headers={"Authorization": f"Bearer {vapi_key}"},
+            params={"assistantId": assistant_id, "limit": 20},
+            timeout=10,
+        )
+        if not r.is_success:
+            return {"calls": []}
+        calls = r.json()
+        result = []
+        for c in calls:
+            result.append({
+                "id": c.get("id"),
+                "caller": c.get("customer", {}).get("number", "Unknown"),
+                "started_at": c.get("startedAt"),
+                "duration": int(c.get("duration", 0) or 0),
+                "ended_reason": c.get("endedReason"),
+                "summary": c.get("summary"),
+                "transcript": c.get("transcript", []),
+            })
+        return {"calls": result}
+    except Exception:
+        return {"calls": []}
 
 
 @app.post("/seed")
@@ -308,6 +367,13 @@ async def vapi_tool_handler(payload: dict, db: Session = Depends(get_db)):
     return {"results": results}
 
 
+def _clean_code(code: str) -> str:
+    """Strip dashes, spaces, 'minus', 'dash' — patient repeats code phonetically."""
+    import re
+    code = code.upper().replace("MINUS", "").replace("DASH", "").replace(" ", "").replace("-", "")
+    return re.sub(r"[^A-Z0-9]", "", code)
+
+
 def _dispatch_tool(name: str, args: dict, db: Session):
     if name == "list_doctors":
         q = db.query(Doctor)
@@ -359,7 +425,7 @@ def _dispatch_tool(name: str, args: dict, db: Session):
 
     elif name == "reschedule_appointment":
         appt = db.query(Appointment).filter(
-            Appointment.confirmation_code == args["confirmation_code"],
+            Appointment.confirmation_code == _clean_code(args["confirmation_code"]),
             Appointment.status == AppointmentStatus.scheduled,
         ).first()
         if not appt:
@@ -379,7 +445,7 @@ def _dispatch_tool(name: str, args: dict, db: Session):
 
     elif name == "cancel_appointment":
         appt = db.query(Appointment).filter(
-            Appointment.confirmation_code == args["confirmation_code"],
+            Appointment.confirmation_code == _clean_code(args["confirmation_code"]),
             Appointment.status == AppointmentStatus.scheduled,
         ).first()
         if not appt:
