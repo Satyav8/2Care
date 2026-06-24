@@ -274,3 +274,129 @@ def lookup_appointments(req: LookupReq, db: Session = Depends(get_db)):
             for a in appts
         ]
     }
+
+
+# ── Vapi Webhook Handler ───────────────────────────────────────────────────
+
+@app.post("/vapi/tool")
+async def vapi_tool_handler(payload: dict, db: Session = Depends(get_db)):
+    """
+    Single endpoint that receives all Vapi tool calls.
+    Vapi sends: { message: { type: "tool-calls", toolCallList: [...] } }
+    We must respond: { results: [{ toolCallId, result }] }
+    """
+    message = payload.get("message", {})
+    tool_calls = message.get("toolCallList", [])
+
+    results = []
+    for call in tool_calls:
+        call_id = call.get("id")
+        fn = call.get("function", {})
+        name = fn.get("name")
+        import json as _json
+        args = fn.get("arguments", {})
+        if isinstance(args, str):
+            args = _json.loads(args)
+
+        try:
+            result = _dispatch_tool(name, args, db)
+        except Exception as e:
+            result = {"error": str(e)}
+
+        results.append({"toolCallId": call_id, "result": _json.dumps(result)})
+
+    return {"results": results}
+
+
+def _dispatch_tool(name: str, args: dict, db: Session):
+    if name == "list_doctors":
+        q = db.query(Doctor)
+        if args.get("department"):
+            q = q.filter(Doctor.department.ilike(f"%{args['department']}%"))
+        if args.get("specialization"):
+            q = q.filter(Doctor.specialization.ilike(f"%{args['specialization']}%"))
+        doctors = q.all()
+        return {
+            "doctors": [
+                {"name": d.name, "department": d.department,
+                 "specialization": d.specialization, "available_days": d.available_days}
+                for d in doctors
+            ]
+        }
+
+    elif name == "check_slots":
+        doctor = _find_doctor(args["doctor_name"], db)
+        if not doctor:
+            return {"error": "Doctor not found"}
+        on_date = date.fromisoformat(args["date"])
+        all_slots = _slots_for_doctor(doctor, on_date)
+        if not all_slots:
+            return {"available_slots": [], "message": f"{doctor.name} is not available on {args['date']}"}
+        booked = _booked_slots(doctor.id, on_date, db)
+        free = [s for s in all_slots if s not in booked]
+        return {"doctor": doctor.name, "date": args["date"], "available_slots": free, "next_available": free[0] if free else None}
+
+    elif name == "book_appointment":
+        doctor = _find_doctor(args["doctor_name"], db)
+        if not doctor:
+            return {"error": "Doctor not found"}
+        appt_dt = datetime.strptime(f"{args['date']} {args['time']}", "%Y-%m-%d %H:%M")
+        on_date = appt_dt.date()
+        free = _slots_for_doctor(doctor, on_date)
+        booked = _booked_slots(doctor.id, on_date, db)
+        if args["time"] not in free or args["time"] in booked:
+            alt = [s for s in free if s not in booked][:3]
+            return {"success": False, "message": f"Slot {args['time']} is unavailable.", "alternatives": alt}
+        code = _confirmation_code()
+        db.add(Appointment(
+            patient_name=args["patient_name"], patient_phone=args["patient_phone"],
+            doctor_id=doctor.id, appointment_datetime=appt_dt,
+            reason=args.get("reason", ""), confirmation_code=code,
+        ))
+        db.commit()
+        return {"success": True, "confirmation_code": code,
+                "message": f"Appointment confirmed with {doctor.name} ({doctor.department}) on {args['date']} at {args['time']}. Confirmation code: {code}."}
+
+    elif name == "reschedule_appointment":
+        appt = db.query(Appointment).filter(
+            Appointment.confirmation_code == args["confirmation_code"],
+            Appointment.status == AppointmentStatus.scheduled,
+        ).first()
+        if not appt:
+            return {"error": "Appointment not found"}
+        doctor = appt.doctor
+        new_dt = datetime.strptime(f"{args['new_date']} {args['new_time']}", "%Y-%m-%d %H:%M")
+        on_date = new_dt.date()
+        free = _slots_for_doctor(doctor, on_date)
+        booked = _booked_slots(doctor.id, on_date, db)
+        booked.discard(appt.appointment_datetime.strftime("%H:%M"))
+        if args["new_time"] not in free or args["new_time"] in booked:
+            alt = [s for s in free if s not in booked][:3]
+            return {"success": False, "message": "Slot unavailable.", "alternatives": alt}
+        appt.appointment_datetime = new_dt
+        db.commit()
+        return {"success": True, "message": f"Rescheduled to {args['new_date']} at {args['new_time']} with {doctor.name}. Code: {args['confirmation_code']}."}
+
+    elif name == "cancel_appointment":
+        appt = db.query(Appointment).filter(
+            Appointment.confirmation_code == args["confirmation_code"],
+            Appointment.status == AppointmentStatus.scheduled,
+        ).first()
+        if not appt:
+            return {"error": "Appointment not found"}
+        appt.status = AppointmentStatus.cancelled
+        db.commit()
+        return {"success": True, "message": f"Appointment with {appt.doctor.name} on {appt.appointment_datetime.strftime('%Y-%m-%d at %H:%M')} cancelled."}
+
+    elif name == "lookup_appointments":
+        appts = db.query(Appointment).filter(
+            Appointment.patient_phone == args["patient_phone"],
+            Appointment.status == AppointmentStatus.scheduled,
+        ).all()
+        return {"appointments": [
+            {"confirmation_code": a.confirmation_code, "doctor": a.doctor.name,
+             "department": a.doctor.department, "datetime": a.appointment_datetime.strftime("%Y-%m-%d %H:%M")}
+            for a in appts
+        ]}
+
+    return {"error": f"Unknown tool: {name}"}
