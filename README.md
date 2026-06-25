@@ -7,6 +7,102 @@ A voice AI agent acting as a receptionist for **Apollo Hospitals, Chennai**. Pat
 
 ---
 
+## Architecture
+
+### System Overview
+
+```mermaid
+graph LR
+    Patient(["👤 Patient\n(Phone Call)"])
+    Twilio["Twilio\n+1 774 228 4992"]
+    Vapi["Vapi\nOrchestrator"]
+    STT["Deepgram Nova-2\nSTT  en-IN"]
+    LLM["GPT-4o-mini\nLLM"]
+    TTS["Azure Neural\nTTS  Neerja"]
+    Backend["FastAPI\nRailway"]
+    DB[("Postgres\nRailway")]
+    Dashboard["Dashboard\nUI"]
+
+    Patient -->|"PSTN call"| Twilio
+    Twilio --> Vapi
+    Vapi --> STT
+    STT -->|"transcript"| LLM
+    LLM -->|"tool call"| Backend
+    Backend --> DB
+    DB --> Backend
+    Backend -->|"JSON result"| LLM
+    LLM -->|"response text"| TTS
+    TTS -->|"audio"| Vapi
+    Vapi --> Twilio
+    Twilio -->|"voice"| Patient
+    DB -->|"read"| Dashboard
+```
+
+### Tool Call Flow
+
+```mermaid
+sequenceDiagram
+    participant P as Patient
+    participant V as Vapi
+    participant G as GPT-4o-mini
+    participant B as FastAPI /vapi/tool
+    participant D as Postgres
+
+    P->>V: "Book with cardiologist tomorrow 10am"
+    V->>G: transcript + system prompt
+    G->>B: list_doctors(department="Cardiology")
+    B->>D: SELECT * FROM doctors WHERE dept LIKE '%Cardiology%'
+    D-->>B: [Dr. K. Hariprasad, Dr. Suresh Rao]
+    B-->>G: {doctors: [...]}
+    G->>V: "We have Dr. Hariprasad and Dr. Suresh Rao..."
+    V->>P: (speaks response)
+    P->>V: "Dr. Hariprasad please"
+    V->>G: transcript
+    G->>B: check_slots(doctor_name="Dr. K. Hariprasad", date="2026-06-25")
+    B->>D: query booked slots
+    D-->>B: free slots list
+    B-->>G: {available_slots: ["09:00","09:20",...]}
+    G->>V: "Available at 9am, 9:20, 10am..."
+    V->>P: (speaks)
+    P->>V: "10am, name is Satya, phone 9000115015"
+    V->>G: transcript
+    G->>B: book_appointment(patient_name, phone, doctor, date, time)
+    B->>D: INSERT INTO appointments
+    D-->>B: confirmation_code=APL123456
+    B-->>G: {success: true, confirmation_code: "APL123456"}
+    G->>V: "Confirmed! Code: A, P, L, 1, 2, 3, 4, 5, 6"
+    V->>P: (speaks confirmation)
+```
+
+### Backend API Structure
+
+```mermaid
+graph TD
+    Root["GET / → Dashboard HTML"]
+    Health["GET /health"]
+    Webhook["POST /vapi/tool\n← All Vapi tool calls"]
+    ListDr["POST /list_doctors"]
+    Slots["POST /check_slots"]
+    Book["POST /book_appointment"]
+    Reschedule["POST /reschedule_appointment"]
+    Cancel["POST /cancel_appointment"]
+    Lookup["POST /lookup_appointments"]
+    AllAppts["GET /appointments/all"]
+    AllDocs["GET /doctors/all"]
+    CallLogs["GET /call_logs"]
+    Seed["POST /seed"]
+    Cleanup["DELETE /eval/cleanup"]
+
+    Webhook -->|"routes by function name"| ListDr
+    Webhook --> Slots
+    Webhook --> Book
+    Webhook --> Reschedule
+    Webhook --> Cancel
+    Webhook --> Lookup
+```
+
+---
+
 ## Stack & Why
 
 | Layer | Choice | Reason |
